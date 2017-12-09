@@ -1,0 +1,172 @@
+---
+title: "Titantic Survivorship ML"
+output: html_notebook
+---
+### Data
+
+```{r}
+library(rpart)
+```
+
+
+#### train
+```{r}
+summary(train)
+```
+
+
+```{r}
+str(train)
+```
+
+
+**Table 1.** Training dataset.
+```{r echo=FALSE}
+DT::datatable(train, filter = 'top')
+```
+
+
+
+#### Decision tree
+
+Predict survivorship using a decision tree.
+
+1. Build tree using `rpart`. Disregard name, cabin, and ticket number.
+
+```{r}
+# subset <- train[c(1:3,5:12)]
+rpart_tree <- rpart(formula = Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked, data = train , method = "class")
+summary(rpart_tree)
+```
+
+
+```{r echo = FALSE}
+#install.packages('rattle')
+#install.packages('rpart.plot')
+#install.packages('RColorBrewer')
+#library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+```
+**Figure 1.** Decision tree.
+```{r}
+rpart.plot(rpart_tree)
+```
+
+2. Test the formula!
+```{r}
+prediction <- predict(rpart_tree, test, type = "class")
+submit <- data.frame(PassengerID = test$PassengerId, Survived = prediction)
+write.csv(submit, file = "myfirstdtree.csv", row.names = FALSE)
+```
+
+3. Submission score = 0.78468 which is better than guessing!
+
+
+4. Let's try over-fitting:
+
+```{r}
+fit <- rpart(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked,
+               data=train,
+               method="class", 
+               control=rpart.control(minsplit=2, cp=0))
+rpart.plot(fit)
+```
+5. Dig into names to find useful information
+
+```{r}
+test$Survived <- NA
+combi <- rbind(train, test)
+```
+
+
+```{r}
+# re cast names as string (imported automatically as factor)
+combi$Name <- as.character(combi$Name)
+combi$Name[1]
+```
+```{r}
+# split on comma
+strsplit(combi$Name[1], split='[,.]')
+```
+```{r}
+strsplit(combi$Name[1], split='[,.]')[[1]]
+```
+```{r}
+strsplit(combi$Name[1], split='[,.]')[[1]][2]
+```
+```{r}
+combi$Title <- sapply(combi$Name, FUN=function(x) {strsplit(x, split='[,.]')[[1]][2]})
+```
+
+```{r}
+combi$Title <- sub(' ', '', combi$Title)
+```
+
+```{r}
+table(combi$Title)
+```
+```{r}
+# combine more unusual titles
+combi$Title[combi$Title %in% c('Mme', 'Mlle')] <- 'Mlle'
+combi$Title[combi$Title %in% c('Capt', 'Don', 'Major', 'Sir')] <- 'Sir'
+combi$Title[combi$Title %in% c('Dona', 'Lady', 'the Countess', 'Jonkheer')] <- 'Lady'
+```
+
+```{r}
+combi$Title <- factor(combi$Title)
+```
+
+```{r}
+# combine family variables into Family Size
+combi$FamilySize <- combi$SibSp + combi$Parch + 1
+```
+
+```{r}
+# find families
+combi$Surname <- sapply(combi$Name, FUN=function(x) {strsplit(x, split='[,.]')[[1]][1]})
+```
+
+```{r}
+# create family ID based on surname
+combi$FamilyID <- paste(as.character(combi$FamilySize), combi$Surname, sep="")
+```
+
+```{r}
+combi$FamilyID[combi$FamilySize <= 2] <- 'Small'
+```
+
+```{r}
+# family groups
+table(combi$FamilyID)
+```
+```{r}
+# still some small sized families, attempt to clean up
+famIDs <- data.frame(table(combi$FamilyID))
+```
+
+```{r}
+# subset small families with <= 2 members
+famIDs <- famIDs[famIDs$Freq <= 2,]
+```
+
+```{r}
+combi$FamilyID[combi$FamilyID %in% famIDs$Var1] <- 'Small'
+combi$FamilyID <- factor(combi$FamilyID)
+```
+
+```{r}
+train <- combi[1:891,]
+test <- combi[892:1309,]
+```
+
+6. test with new family structure!
+```{r}
+fit <- rpart(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title + FamilySize + FamilyID,
+               data=train, 
+               method="class")
+rpart.plot(fit)
+```
+
+#### Random Forest
+
